@@ -3,6 +3,9 @@ import redis
 import pandas as pd
 from datetime import *
 import ast
+import dask.dataframe as dd
+from dask import delayed
+import hashlib
 
 def udf_reformat_to_iso(string: str):
     splits = string.replace(' ', '').split(',')
@@ -53,6 +56,11 @@ def  sql_to_pandas(data) -> pd.DataFrame:
     df = pd.DataFrame(data, columns=['key', 'timestamp', 'name', 'email'])
     return df
 
+@delayed
+def perform_join(block1, block2):
+    # Perform the join operation
+    join_result = dd.merge(block1, block2, on='hash_column', how='inner')
+    return join_result
 
 conn = sqlite3.connect('data1/mydatabase.db')
 cursor = conn.cursor()
@@ -70,10 +78,33 @@ cursor.execute("SELECT * FROM dataset1")
 sqlite_data = cursor.fetchall()
 sql_df = sql_to_pandas(sqlite_data)
 
-join_key = 'key'
+join_key = 'name'
 
-# Step 2: Partition the DataFrames
-df1_partitions = sql_df.groupby(join_key)
-df2_partitions = redis_df.groupby(join_key)
+md5_hash = hashlib.md5()
+# hash_object.update(string_to_hash.encode('utf-8'))
+# hashed_string = hash_object.hexdigest()
 
-print('end')
+
+npartitions = 100
+
+sql_df['hash_column'] = sql_df[join_key].apply(lambda x: md5_hash.update(x.encode('utf-8')) or md5_hash.hexdigest())
+redis_df['hash_column'] = sql_df[join_key].apply(lambda x: md5_hash.update(x.encode('utf-8')) or md5_hash.hexdigest())
+
+df1 = dd.from_pandas(sql_df, npartitions=10)
+df2 = dd.from_pandas(redis_df, npartitions=10)
+
+# Split df1 into blocks
+blocks_df1 = df1.to_delayed()
+
+# Split df2 into blocks
+blocks_df2 = df2.to_delayed()
+
+# Concatenate the join results
+final_result = [perform_join(block1, block2) for block1, block2 in zip(blocks_df1, blocks_df2)]
+
+# Compute and display the final result
+final_result = dd.compute(*final_result)
+print(final_result)
+
+# joined_results = dd.concat([dd.merge(block1, block2, on='hash_column') for block1, block2 in zip(blocks_df1, blocks_df2)]).compute()
+# print(joined_results)
