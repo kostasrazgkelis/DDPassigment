@@ -11,7 +11,7 @@ import cProfile
 
 from dask.tests.test_system import psutil
 from dateutil.relativedelta import relativedelta
-
+from dask.diagnostics import visualize
 
 # Function to calculate the optimal number of partitions
 def calculate_partitions():
@@ -93,10 +93,14 @@ def sql_to_pandas(data) -> pd.DataFrame:
     return df
 
 
-def assign_partitions(df, join_key, npartitions):
-    df['hash_column'] = df[join_key] % npartitions
-    return df
+def assign_partitions(df_partition, join_key, npartitions):
+    df_partition['hash_value'] = df_partition[join_key].apply(lambda x: hash(str(x)) % npartitions)
+    df_partition.sort_values(by="hash_value")
+    return df_partition
 
+# Define a custom function to filter the DataFrame based on the hash value
+def filter_by_hash(df_partition, hash_value):
+    return df_partition[df_partition['hash_value'] == hash_value]
 
 @delayed
 def perform_join(block1, block2, join_key):
@@ -110,6 +114,27 @@ class CustomJoinPipelines:
     def __init__(self):
         pass
 
+
+    def normal_join(self, df1, df2, join_key):
+        # Assuming df1 and df2 are Pandas DataFrames
+        timestamp_constraint = datetime.now() - relativedelta(years=2)
+
+        start = time.time()
+
+        # Apply the timestamp constraint and select columns
+        filtered_df1 = df1[df1['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']]
+        filtered_df2 = df2[df2['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']]
+
+        # Perform the join operation
+        final_result = filtered_df1.merge(filtered_df2, on='user_id', how='inner')
+
+        finish = time.time() - start
+
+        print(final_result)
+        print("Execution time:", finish)
+        return final_result
+
+
     def pipelined_hash_join(self, df1, df2, join_key, npartitions):
         print(f"The number of partitions calculated {npartitions}")
 
@@ -119,18 +144,23 @@ class CustomJoinPipelines:
         df2 = dd.from_pandas(df2, npartitions=npartitions)
 
         # Define the metadata for the DataFrame
-        meta_sql = pd.DataFrame(columns=df1.columns.tolist() + ['hash_column'])
-        meta_redis = pd.DataFrame(columns=df2.columns.tolist() + ['hash_column'])
+        meta_sql = pd.DataFrame(columns=df1.columns.tolist() + ['hash_value'])
+        meta_redis = pd.DataFrame(columns=df2.columns.tolist() + ['hash_value'])
 
-        df1 = df1.map_partitions(assign_partitions, join_key, npartitions, meta=meta_sql)
-        df2 = df2.map_partitions(assign_partitions, join_key, npartitions, meta=meta_redis)
+        #df1 = df1.map_partitions(assign_partitions, join_key, npartitions, meta=meta_sql)
+        #df2 = df2.map_partitions(assign_partitions, join_key, npartitions, meta=meta_redis)
 
-        df1 = df1.drop(columns=['hash_column'])
-        df2 = df2.drop(columns=['hash_column'])
+        # Partition the DataFrame based on each hash value using map_partition
+        blocks_df1 = []
+        for hash_value in range(npartitions):  # Assuming hash values are from 0 to 9
+            partition = df1.map_partitions(filter_by_hash, hash_value=hash_value, meta=meta_sql)
+            blocks_df1.append(partition)
 
-        # Split df1 and df2 into blocks
-        blocks_df1 = df1.to_delayed()
-        blocks_df2 = df2.to_delayed()
+        # Partition the DataFrame based on each hash value using map_partition
+        blocks_df2 = []
+        for hash_value in range(npartitions):  # Assuming hash values are from 0 to 9
+            partition = df2.map_partitions(filter_by_hash, hash_value=hash_value, meta=meta_redis)
+            blocks_df2.append(partition)
 
         timestamp_constraint = datetime.now() - relativedelta(years=2)
 
@@ -149,7 +179,7 @@ class CustomJoinPipelines:
         finish = time.time() - start
 
         print(f"Execution time {finish:.2f} seconds")
-        return (final_result)
+        return final_result
 
 
 if __name__ == '__main__':
