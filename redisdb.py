@@ -1,6 +1,7 @@
+import random
+
 import redis
 from faker import Faker
-
 
 fake = Faker()
 
@@ -8,30 +9,29 @@ fake = Faker()
 r = redis.Redis(host='localhost', port=6379)
 
 # Delete the "users" key if it exists
-r.delete('dataset1')
-#r.delete('dataset2')
+r.delete('test_dataset')
 
-for _ in range(0, 500):
-    timestamp = fake.date_time_between(start_date='-1y', end_date='now')
-    user_id = str(_)
+# Create a pipeline
+pipe = r.pipeline()
+
+num_entries = 100
+batch_size = 100
+
+# Insert data into Redis using pipeline
+for i in range(num_entries):
+    timestamp = fake.date_time_between(start_date='-10y', end_date='now')
     user_data = {
+        'user_id': random.randint(10000, 10010),
         'timestamp': timestamp,
-        'name': fake.name(),
-        'address': fake.address(),
-        'phone_number': fake.phone_number(),
-        'job_title': fake.job(),
     }
-    r.hset('dataset1', user_id, str(user_data))
+    pipe.hset('test_dataset', i, str(user_data))
 
-# for _ in range(0, 100):
-#     timestamp = fake.date_time_between(start_date='-1y', end_date='now')
-#     user_id = str(_)
-#     user_data = {
-#         'timestamp': timestamp,
-#         'name': fake.name(),
-#         'email': fake.email()
-#     }
-#     r.hset('dataset2', user_id, str(user_data))
+    # Execute the pipeline in batches
+    if (i + 1) % batch_size == 0:
+        pipe.execute()
+        pipe = r.pipeline()
+        print(f"The batch number {i // batch_size} has finished")
 
-# Close the Redis connection
+# Execute the pipeline
+pipe.execute()
 r.close()
