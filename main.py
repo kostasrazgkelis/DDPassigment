@@ -99,9 +99,12 @@ def assign_partitions(df_partition, join_key, npartitions):
     return df_partition
 
 # Define a custom function to filter the DataFrame based on the hash value
-def filter_by_hash(df_partition, hash_value):
-    return df_partition[df_partition['hash_value'] == hash_value]
+# def filter_by_hash(df_partition, hash_value):
+#     return df_partition[df_partition['hash_value'] == hash_value]
 
+def filter_by_hash(df_partition, join_key, npartitions):
+    hash_value = df_partition[join_key] % npartitions
+    return df_partition.assign(hash_value=hash_value)
 @delayed
 def perform_join(block1, block2, join_key):
     # Perform the join operation
@@ -143,24 +146,16 @@ class CustomJoinPipelines:
         df1 = dd.from_pandas(df1, npartitions=npartitions)
         df2 = dd.from_pandas(df2, npartitions=npartitions)
 
-        # Define the metadata for the DataFrame
-        meta_sql = pd.DataFrame(columns=df1.columns.tolist() + ['hash_value'])
-        meta_redis = pd.DataFrame(columns=df2.columns.tolist() + ['hash_value'])
+        df1['hash_value'] = df1['user_id'].apply(lambda x: x % npartitions)
+        df2['hash_value'] = df2['user_id'].apply(lambda x: x % npartitions)
 
-        #df1 = df1.map_partitions(assign_partitions, join_key, npartitions, meta=meta_sql)
-        #df2 = df2.map_partitions(assign_partitions, join_key, npartitions, meta=meta_redis)
+        # Set "hash_value" column as the index
+        df1 = df1.set_index('hash_value')
+        df2 = df2.set_index('hash_value')
 
-        # Partition the DataFrame based on each hash value using map_partition
-        blocks_df1 = []
-        for hash_value in range(npartitions):  # Assuming hash values are from 0 to 9
-            partition = df1.map_partitions(filter_by_hash, hash_value=hash_value, meta=meta_sql)
-            blocks_df1.append(partition)
-
-        # Partition the DataFrame based on each hash value using map_partition
-        blocks_df2 = []
-        for hash_value in range(npartitions):  # Assuming hash values are from 0 to 9
-            partition = df2.map_partitions(filter_by_hash, hash_value=hash_value, meta=meta_redis)
-            blocks_df2.append(partition)
+        # Repartition the DataFrame based on the index
+        blocks_df1 = df1.repartition(npartitions=npartitions)
+        blocks_df2 = df2.repartition(npartitions=npartitions)
 
         timestamp_constraint = datetime.now() - relativedelta(years=2)
 
@@ -171,7 +166,7 @@ class CustomJoinPipelines:
                 block2[block2['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']],
                 join_key
             )
-            for block1, block2 in zip(blocks_df1, blocks_df2)
+            for block1, block2 in zip(blocks_df1.partitions, blocks_df2.partitions)
         ]
         # Compute and display the final result
         final_result = dd.compute(*final_result, num_workers=4)

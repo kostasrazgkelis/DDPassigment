@@ -19,7 +19,8 @@ class MyTestCase(unittest.TestCase):
         self.test_result_df['timestamp_x'] = pd.to_datetime(self.test_result_df['timestamp_x'])
         self.test_result_df['timestamp_y'] = pd.to_datetime(self.test_result_df['timestamp_y'])
         self.test_result_df['user_id'] = self.test_result_df['user_id'].astype('int64')
-
+        self.test_result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
+        self.test_result_df.reset_index(drop=True, inplace=True)
 
         self.pipelines = CustomJoinPipelines()
 
@@ -33,10 +34,26 @@ class MyTestCase(unittest.TestCase):
 
         self.assertEqual(self.test_result_df.equals(result_df), True, "Dataframes are not equal")
 
-    def test_pipelined_hash_join(self):
+    def test_pipelined_hash_join_with_10_partitions(self):
         result_df = self.pipelines.pipelined_hash_join(df1=self.redis_df, df2=self.sql_df, join_key='user_id', npartitions=10)
         result_df = pd.concat(result_df)
-        result_df.sort_values(by="user_id", inplace=True)
+        result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
+        result_df.reset_index(drop=True, inplace=True)
+
+        self.assertEqual(self.test_result_df.equals(result_df), True, "Dataframes are not equal")
+
+    def test_pipelined_hash_join_with_50_partitions(self):
+        result_df = self.pipelines.pipelined_hash_join(df1=self.redis_df, df2=self.sql_df, join_key='user_id', npartitions=50)
+        result_df = pd.concat(result_df)
+        result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
+        result_df.reset_index(drop=True, inplace=True)
+
+        self.assertEqual(self.test_result_df.equals(result_df), True, "Dataframes are not equal")
+
+    def test_pipelined_hash_join_with_100_partitions(self):
+        result_df = self.pipelines.pipelined_hash_join(df1=self.redis_df, df2=self.sql_df, join_key='user_id', npartitions=100)
+        result_df = pd.concat(result_df)
+        result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
         result_df.reset_index(drop=True, inplace=True)
 
         self.assertEqual(self.test_result_df.equals(result_df), True, "Dataframes are not equal")
