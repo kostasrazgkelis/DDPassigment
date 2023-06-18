@@ -1,6 +1,7 @@
 import sqlite3
 import time
 from datetime import datetime
+from functools import wraps
 
 import redis
 import pandas as pd
@@ -12,6 +13,7 @@ import cProfile
 from dask.tests.test_system import psutil
 from dateutil.relativedelta import relativedelta
 from dask.diagnostics import visualize
+
 
 # Function to calculate the optimal number of partitions
 def calculate_partitions():
@@ -93,18 +95,6 @@ def sql_to_pandas(data) -> pd.DataFrame:
     return df
 
 
-def assign_partitions(df_partition, join_key, npartitions):
-    df_partition['hash_value'] = df_partition[join_key].apply(lambda x: hash(str(x)) % npartitions)
-    df_partition.sort_values(by="hash_value")
-    return df_partition
-
-# Define a custom function to filter the DataFrame based on the hash value
-# def filter_by_hash(df_partition, hash_value):
-#     return df_partition[df_partition['hash_value'] == hash_value]
-
-def filter_by_hash(df_partition, join_key, npartitions):
-    hash_value = df_partition[join_key] % npartitions
-    return df_partition.assign(hash_value=hash_value)
 @delayed
 def perform_join(block1, block2, join_key):
     # Perform the join operation
@@ -112,17 +102,28 @@ def perform_join(block1, block2, join_key):
     return join_result
 
 
+def timeit(func):
+    @wraps(func)
+    def timeit_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        print(f'Function {func.__name__} Took {total_time:.4f} seconds')
+        return result
+
+    return timeit_wrapper
+
+
 class CustomJoinPipelines:
 
     def __init__(self):
         pass
 
-
+    @timeit
     def normal_join(self, df1, df2, join_key):
         # Assuming df1 and df2 are Pandas DataFrames
         timestamp_constraint = datetime.now() - relativedelta(years=2)
-
-        start = time.time()
 
         # Apply the timestamp constraint and select columns
         filtered_df1 = df1[df1['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']]
@@ -131,17 +132,11 @@ class CustomJoinPipelines:
         # Perform the join operation
         final_result = filtered_df1.merge(filtered_df2, on='user_id', how='inner')
 
-        finish = time.time() - start
-
-        print(final_result)
-        print("Execution time:", finish)
         return final_result
 
-
+    @timeit
     def pipelined_hash_join(self, df1, df2, join_key, npartitions):
         print(f"The number of partitions calculated {npartitions}")
-
-        start = time.time()
 
         df1 = dd.from_pandas(df1, npartitions=npartitions)
         df2 = dd.from_pandas(df2, npartitions=npartitions)
@@ -171,9 +166,6 @@ class CustomJoinPipelines:
         # Compute and display the final result
         final_result = dd.compute(*final_result, num_workers=4)
 
-        finish = time.time() - start
-
-        print(f"Execution time {finish:.2f} seconds")
         return final_result
 
 
