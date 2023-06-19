@@ -1,3 +1,4 @@
+import csv
 import sqlite3
 import time
 from datetime import datetime
@@ -95,11 +96,7 @@ def sql_to_pandas(data) -> pd.DataFrame:
     return df
 
 
-@delayed
-def perform_join(block1, block2, join_key):
-    # Perform the join operation
-    join_result = dd.merge(block1, block2, on=join_key, how='inner')
-    return join_result
+
 
 
 def timeit(func):
@@ -110,6 +107,7 @@ def timeit(func):
         end_time = time.perf_counter()
         total_time = end_time - start_time
         print(f'Function {func.__name__} Took {total_time:.4f} seconds')
+
         return result
 
     return timeit_wrapper
@@ -119,6 +117,12 @@ class CustomJoinPipelines:
 
     def __init__(self):
         pass
+
+    @delayed
+    def perform_join(self, block1, block2, join_key):
+        # Perform the join operation
+        join_result = dd.merge(block1, block2, on=join_key, how='inner')
+        return join_result
 
     @timeit
     def normal_join(self, df1, df2, join_key):
@@ -156,7 +160,7 @@ class CustomJoinPipelines:
 
         # Concatenate the join results
         final_result = [
-            perform_join(
+            self.perform_join(
                 block1[block1['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']],
                 block2[block2['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']],
                 join_key
@@ -167,6 +171,35 @@ class CustomJoinPipelines:
         final_result = dd.compute(*final_result, num_workers=4)
 
         return final_result
+
+    @timeit
+    def semi_join(self, df1, df2, join_key, npartitions):
+        print(f"The number of partitions calculated: {npartitions}")
+
+        df1 = dd.from_pandas(df1, npartitions=npartitions)
+        df2 = dd.from_pandas(df2, npartitions=npartitions)
+
+        timestamp_constraint = datetime.now() - relativedelta(years=2)
+
+        df1 = df1.reset_index(drop=True)
+        df1 = df1.drop(columns='counter')
+
+        df2 = df2.reset_index(drop=True)
+        df2 = df2.drop(columns='counter')
+
+        # Apply the timestamp constraint and select columns
+        df1 = df1[df1['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']]
+        df2 = df2[df2['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']]
+
+        df1 = df1.set_index(join_key).repartition(npartitions=npartitions)
+        df2 = df2.set_index(join_key).repartition(npartitions=npartitions)
+
+        semi_join_result = dd.merge(df1, df2, left_index=True, right_index=True, how='right')
+        semi_join_result = semi_join_result.dropna().compute()
+
+        semi_join_result.reset_index(drop=False, inplace=True)
+
+        return semi_join_result
 
 
 if __name__ == '__main__':
@@ -191,7 +224,7 @@ if __name__ == '__main__':
     sql_df = sql_to_pandas(sqlite_data)
 
     finish = time.time() - start
-    print(f"Reading and Foramming the data in {finish:.2f} seconds")
+    print(f"Reading and Formatting the data in {finish:.2f} seconds")
 
     solution = CustomJoinPipelines.pipelined_hash_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
 
