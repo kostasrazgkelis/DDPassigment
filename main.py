@@ -1,8 +1,12 @@
 import csv
+import functools
 import sqlite3
 import time
 from datetime import datetime
 from functools import wraps
+
+from bitarray import bitarray
+from pybloom_live import BloomFilter
 
 import redis
 import pandas as pd
@@ -96,7 +100,10 @@ def sql_to_pandas(data) -> pd.DataFrame:
     return df
 
 
-
+def create_bloom_filter(partition):
+    bloom_filter = BloomFilter(capacity=len(partition), error_rate=0.1)
+    partition['user_id'].apply(lambda x: bloom_filter.add(str(x)))
+    return bloom_filter
 
 
 def timeit(func):
@@ -200,6 +207,52 @@ class CustomJoinPipelines:
         semi_join_result.reset_index(drop=False, inplace=True)
 
         return semi_join_result
+
+    @timeit
+    def intersection_bloom_filter_join(self, df1, df2, join_key, npartitions):
+        test_dataa = df1.copy()
+        test_datab = df2.copy()
+
+        df1[join_key] = df1[join_key].astype('string')
+        df2[join_key] = df1[join_key].astype('string')
+
+        df1 = dd.from_pandas(df1, npartitions=npartitions)
+        df2 = dd.from_pandas(df2, npartitions=npartitions)
+
+        bloom_filter1 = df1.map_partitions(create_bloom_filter, meta=pd.DataFrame(columns=df1.columns))
+        bloom_filter2 = df2.map_partitions(create_bloom_filter, meta=pd.DataFrame(columns=df2.columns))
+
+        bit_arrays = [pd.Series(bloomf.bitarray) for bloomf in bloom_filter1.compute()]
+
+        # Perform union using a loop
+        union_bit_array = bit_arrays[0]
+        for bit_array in bit_arrays[1:]:
+            union_bit_array |= bit_array
+
+        final_bloom_filter1 = BloomFilter(capacity=10, error_rate=0.1)
+        final_bloom_filter1.bitarray = bitarray(union_bit_array.astype(bool).tolist())
+
+        bit_arrays = [pd.Series(bloomf.bitarray) for bloomf in bloom_filter2.compute()]
+
+        # Perform union using a loop
+        union_bit_array = bit_arrays[0]
+        for bit_array in bit_arrays[1:]:
+            union_bit_array |= bit_array
+
+        final_bloom_filter2 = BloomFilter(capacity=10, error_rate=0.1)
+        final_bloom_filter2.bitarray = bitarray(union_bit_array.astype(bool).tolist())
+
+        timestamp_constraint = datetime.now() - relativedelta(years=2)
+
+        merged_bloom_fitlers = final_bloom_filter1.intersection(final_bloom_filter2)
+
+        df1 = df1[(df1['user_id'].apply(lambda x: x in merged_bloom_fitlers)) & (df1['timestamp'] >= timestamp_constraint)][['user_id', 'timestamp']]
+        df2 = df2[(df2['user_id'].apply(lambda x: x in merged_bloom_fitlers)) & (df2['timestamp'] >= timestamp_constraint)][['user_id', 'timestamp']]
+
+        final_result = dd.merge(df1, df2, on='user_id', how='inner')
+        final_result = dd.compute(*final_result, num_workers=4)
+
+        return final_result
 
 
 if __name__ == '__main__':
