@@ -9,16 +9,16 @@ fake = Faker()
 conn = sqlite3.connect('data1/mydatabase.db')
 cursor = conn.cursor()
 
-cursor.execute("DROP TABLE IF EXISTS test_dataset")
+cursor.execute("DROP TABLE IF EXISTS dataset500k")
 
 
-cursor.execute("CREATE TABLE IF NOT EXISTS test_dataset (counter INTEGER PRIMARY KEY, user_id INT, timestamp TEXT)")
+cursor.execute("CREATE TABLE IF NOT EXISTS dataset500k (counter INTEGER PRIMARY KEY, user_id INT, timestamp TEXT)")
 
 # Prepare the INSERT statement
-insert_query = "INSERT INTO test_dataset (user_id, timestamp) VALUES (?, ?)"
+insert_query = "INSERT INTO dataset500k (user_id, timestamp) VALUES (?, ?)"
 
-num_rows = 100
-batch_size = 100
+num_rows = 500000
+batch_size = 10000
 
 # Generate and insert the data in batches
 for batch_number, _ in enumerate(range(0, num_rows, batch_size)):

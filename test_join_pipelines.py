@@ -60,7 +60,6 @@ class MyTestCase(unittest.TestCase):
 
     def test_semi_join_with_10_partitions(self):
         result_df = self.pipelines.semi_join(df1=self.redis_df, df2=self.sql_df, join_key='user_id', npartitions=10)
-        #result_df = pd.concat(result_df)
         result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
         result_df.reset_index(drop=True, inplace=True)
 
@@ -68,7 +67,6 @@ class MyTestCase(unittest.TestCase):
 
     def test_semi_join_with_50_partitions(self):
         result_df = self.pipelines.semi_join(df1=self.redis_df, df2=self.sql_df, join_key='user_id', npartitions=50)
-        #result_df = pd.concat(result_df)
         result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
         result_df.reset_index(drop=True, inplace=True)
 
@@ -76,7 +74,6 @@ class MyTestCase(unittest.TestCase):
 
     def test_semi_join_with_100_partitions(self):
         result_df = self.pipelines.semi_join(df1=self.redis_df, df2=self.sql_df, join_key='user_id', npartitions=100)
-        # result_df = pd.concat(result_df)
         result_df.sort_values(by=['user_id', 'timestamp_x', 'timestamp_y'], inplace=True)
         result_df.reset_index(drop=True, inplace=True)
 

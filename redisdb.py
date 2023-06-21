@@ -9,13 +9,13 @@ fake = Faker()
 r = redis.Redis(host='localhost', port=6379)
 
 # Delete the "users" key if it exists
-r.delete('test_dataset')
+r.delete('dataset500k')
 
 # Create a pipeline
 pipe = r.pipeline()
 
-num_entries = 100
-batch_size = 100
+num_entries = 500_000
+batch_size = 10000
 
 # Insert data into Redis using pipeline
 for i in range(num_entries):
@@ -24,7 +24,7 @@ for i in range(num_entries):
         'user_id': random.randint(10000, 10010),
         'timestamp': timestamp,
     }
-    pipe.hset('test_dataset', i, str(user_data))
+    pipe.hset('dataset500k', i, str(user_data))
 
     # Execute the pipeline in batches
     if (i + 1) % batch_size == 0:

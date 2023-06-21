@@ -5,6 +5,7 @@ from functools import wraps
 
 from bitarray import bitarray
 from pybloom_live import BloomFilter
+import warnings
 
 import redis
 import pandas as pd
@@ -17,6 +18,7 @@ from dask.tests.test_system import psutil
 from dateutil.relativedelta import relativedelta
 from dask.diagnostics import visualize
 
+warnings.filterwarnings("ignore", category=Warning)
 
 # Function to calculate the optimal number of partitions
 def calculate_partitions():
@@ -96,9 +98,6 @@ def sql_to_pandas(data) -> pd.DataFrame:
     df['user_id'] = df['user_id'].astype('int64')
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
-
-
-
 
 
 def timeit(func):
@@ -196,7 +195,7 @@ class CustomJoinPipelines:
         df1 = df1.set_index(join_key).repartition(npartitions=npartitions)
         df2 = df2.set_index(join_key).repartition(npartitions=npartitions)
 
-        semi_join_result = dd.merge(df1, df2, left_index=True, right_index=True, how='right')
+        semi_join_result = dd.merge(df1, df2, left_index=True, right_index=True, how='inner')
         semi_join_result = semi_join_result.dropna().compute()
 
         semi_join_result.reset_index(drop=False, inplace=True)
@@ -224,6 +223,7 @@ class CustomJoinPipelines:
 
     @timeit
     def intersection_bloom_filter_join(self, df1, df2, join_key, npartitions):
+        start = time.time()
 
         df1[join_key] = df1[join_key].astype('string')
         df2[join_key] = df1[join_key].astype('string')
@@ -236,12 +236,19 @@ class CustomJoinPipelines:
         bloom_filter1 = df1.map_partitions(self.create_bloom_filter, meta=pd.DataFrame(columns=df1.columns))
         bloom_filter2 = df2.map_partitions(self.create_bloom_filter, meta=pd.DataFrame(columns=df2.columns))
 
-        merged_bloom_fitlers = self.merge_bloom_filters(bloom_filter1).intersection(self.merge_bloom_filters(bloom_filter2))
+        merged_bloom_fitlers = self.merge_bloom_filters(bloom_filter1).intersection(
+            self.merge_bloom_filters(bloom_filter2))
+
+        print(f"total time to build the iflter {time.time() - start}")
 
         timestamp_constraint = datetime.now() - relativedelta(years=2)
 
-        df1 = df1[(df1[join_key].apply(lambda x: x in merged_bloom_fitlers)) & (df1['timestamp'] >= timestamp_constraint)][[join_key, 'timestamp']]
-        df2 = df2[(df2[join_key].apply(lambda x: x in merged_bloom_fitlers)) & (df2['timestamp'] >= timestamp_constraint)][[join_key, 'timestamp']]
+        df1 = \
+        df1[(df1[join_key].apply(lambda x: x in merged_bloom_fitlers)) & (df1['timestamp'] >= timestamp_constraint)][
+            [join_key, 'timestamp']]
+        df2 = \
+        df2[(df2[join_key].apply(lambda x: x in merged_bloom_fitlers)) & (df2['timestamp'] >= timestamp_constraint)][
+            [join_key, 'timestamp']]
 
         df1 = df1.compute()
         df2 = df2.compute()
@@ -260,14 +267,16 @@ if __name__ == '__main__':
     start = time.time()
 
     # Execute a SELECT query to fetch all rows from a table
-    # redis_data = r.hgetall('dataset100k')
-    redis_data = r.hgetall('dataset1kk')
+    redis_data = r.hgetall('dataset100k')
+    #redis_data = r.hgetall('dataset500k')
+    # redis_data = r.hgetall('dataset1kk')
 
     redis_df = redis_to_pandas(redis_data)
 
     # Execute a SELECT query to fetch all rows from a table
-    # cursor.execute("SELECT * FROM dataset100k")
-    cursor.execute("SELECT * FROM dataset1kk")
+    cursor.execute("SELECT * FROM dataset100k")
+    # cursor.execute("SELECT * FROM dataset500k")
+    # cursor.execute("SELECT * FROM dataset1kk")
 
     sqlite_data = cursor.fetchall()
     sql_df = sql_to_pandas(sqlite_data)
@@ -275,7 +284,10 @@ if __name__ == '__main__':
     finish = time.time() - start
     print(f"Reading and Formatting the data in {finish:.2f} seconds")
 
-    solution = CustomJoinPipelines.pipelined_hash_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+    pipeLineObj = CustomJoinPipelines()
+    pipeLineObj.pipelined_hash_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+    pipeLineObj.semi_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+    pipeLineObj.intersection_bloom_filter_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
 
     # # Create a profile object
     # profile = cProfile.Profile()
