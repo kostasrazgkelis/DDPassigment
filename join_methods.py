@@ -1,4 +1,5 @@
 import sqlite3
+import sys
 import time
 from datetime import datetime
 from functools import wraps
@@ -141,7 +142,6 @@ class CustomJoinPipelines:
 
     @timeit
     def pipelined_hash_join(self, df1, df2, join_key, npartitions):
-        print(f"The number of partitions calculated {npartitions}")
 
         df1 = dd.from_pandas(df1, npartitions=npartitions)
         df2 = dd.from_pandas(df2, npartitions=npartitions)
@@ -153,29 +153,22 @@ class CustomJoinPipelines:
         df1 = df1.set_index('hash_value')
         df2 = df2.set_index('hash_value')
 
-        # Repartition the DataFrame based on the index
-        blocks_df1 = df1.repartition(npartitions=npartitions)
-        blocks_df2 = df2.repartition(npartitions=npartitions)
-
         timestamp_constraint = datetime.now() - relativedelta(years=2)
 
-        # Concatenate the join results
-        final_result = [
-            self.perform_join(
+        # Iterate over the blocks of data
+        for block1, block2 in zip(df1.partitions, df2.partitions):
+            # Perform the join operation
+            merged_data = self.perform_join(
                 block1[block1['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']],
                 block2[block2['timestamp'] >= timestamp_constraint][['user_id', 'timestamp']],
                 join_key
             )
-            for block1, block2 in zip(blocks_df1.partitions, blocks_df2.partitions)
-        ]
-        # Compute and display the final result
-        final_result = dd.compute(*final_result, num_workers=4)
+            # Print the merged data
+            merged_data.compute()
 
-        return final_result
 
     @timeit
     def semi_join(self, df1, df2, join_key, npartitions):
-        print(f"The number of partitions calculated: {npartitions}")
 
         df1 = dd.from_pandas(df1, npartitions=npartitions)
         df2 = dd.from_pandas(df2, npartitions=npartitions)
@@ -195,12 +188,16 @@ class CustomJoinPipelines:
         df1 = df1.set_index(join_key).repartition(npartitions=npartitions)
         df2 = df2.set_index(join_key).repartition(npartitions=npartitions)
 
-        semi_join_result = dd.merge(df1, df2, left_index=True, right_index=True, how='inner')
-        semi_join_result = semi_join_result.dropna().compute()
-
-        semi_join_result.reset_index(drop=False, inplace=True)
-
-        return semi_join_result
+        # Iterate over the blocks of data
+        for block1, block2 in zip(df1.partitions, df2.partitions):
+            # Perform the join operation
+            merged_data = dd.merge(
+                block1[block1['timestamp'] >= timestamp_constraint],
+                block2[block2['timestamp'] >= timestamp_constraint],
+                left_index=True, right_index=True, how='inner'
+            )
+            # Print the merged data
+            merged_data.compute()
 
     def create_bloom_filter(self, partition):
         bloom_filter = BloomFilter(capacity=self.capacity, error_rate=0.1)
@@ -239,7 +236,7 @@ class CustomJoinPipelines:
         merged_bloom_fitlers = self.merge_bloom_filters(bloom_filter1).intersection(
             self.merge_bloom_filters(bloom_filter2))
 
-        print(f"total time to build the iflter {time.time() - start}")
+        print(f"total time to build the filter {time.time() - start}")
 
         timestamp_constraint = datetime.now() - relativedelta(years=2)
 
@@ -250,44 +247,59 @@ class CustomJoinPipelines:
         df2[(df2[join_key].apply(lambda x: x in merged_bloom_fitlers)) & (df2['timestamp'] >= timestamp_constraint)][
             [join_key, 'timestamp']]
 
-        df1 = df1.compute()
-        df2 = df2.compute()
+        # Iterate over the blocks of data
+        for block1, block2 in zip(df1.partitions, df2.partitions):
+            # Perform the join operation
+            merged_data = dd.merge(
+                block1[block1['timestamp'] >= timestamp_constraint],
+                block2[block2['timestamp'] >= timestamp_constraint],
+                left_index=True, right_index=True, how='inner'
+            )
+            # Print the merged data
+            merged_data.compute()
 
-        final_result = pd.merge(df1, df2, on=join_key, how='inner')
-
-        return final_result
 
 
 if __name__ == '__main__':
+
+    # Check if command-line arguments are provided
+
+    if not len(sys.argv) > 0:
+        print("No arguments provided.")
+        sys.exit(1)
+
+    dataset_name, join_method = sys.argv[1:]
+
+
+
     conn = sqlite3.connect('data1/mydatabase.db')
     cursor = conn.cursor()
 
     r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+    redis_data = r.hgetall(dataset_name)
 
-    start = time.time()
-
-    # Execute a SELECT query to fetch all rows from a table
-    redis_data = r.hgetall('dataset100k')
-    #redis_data = r.hgetall('dataset500k')
-    # redis_data = r.hgetall('dataset1kk')
+    cursor.execute(f"SELECT * FROM {dataset_name}")
+    sqlite_data = cursor.fetchall()
 
     redis_df = redis_to_pandas(redis_data)
 
-    # Execute a SELECT query to fetch all rows from a table
-    cursor.execute("SELECT * FROM dataset100k")
-    # cursor.execute("SELECT * FROM dataset500k")
-    # cursor.execute("SELECT * FROM dataset1kk")
-
-    sqlite_data = cursor.fetchall()
     sql_df = sql_to_pandas(sqlite_data)
 
-    finish = time.time() - start
-    print(f"Reading and Formatting the data in {finish:.2f} seconds")
-
     pipeLineObj = CustomJoinPipelines()
-    pipeLineObj.pipelined_hash_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
-    pipeLineObj.semi_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
-    pipeLineObj.intersection_bloom_filter_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+
+    if join_method == "hash_join":
+        pipeLineObj.pipelined_hash_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+
+    elif join_method == "semi_join":
+        pipeLineObj.semi_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+
+    elif join_method == "bloom_join":
+        pipeLineObj.intersection_bloom_filter_join(df1=redis_df, df2=sql_df, join_key='user_id', npartitions=100)
+
+    else:
+        print("Invalid join method specified.")
+        sys.exit(1)
+
 
     # # Create a profile object
     # profile = cProfile.Profile()

@@ -1,37 +1,59 @@
 import random
+import time
+from functools import wraps
 
 import redis
 from faker import Faker
 
-fake = Faker()
 
-# Connect to Redis
-r = redis.Redis(host='localhost', port=6379)
+def timeit(func):
+    @wraps(func)
+    def timeit_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        print(f'Redis: Function {func.__name__}  Took {total_time:.4f} seconds')
 
-# Delete the "users" key if it exists
-r.delete('dataset500k')
+        return result
 
-# Create a pipeline
-pipe = r.pipeline()
+    return timeit_wrapper
 
-num_entries = 500_000
-batch_size = 10000
 
-# Insert data into Redis using pipeline
-for i in range(num_entries):
-    timestamp = fake.date_time_between(start_date='-10y', end_date='now')
-    user_data = {
-        'user_id': random.randint(10000, 10010),
-        'timestamp': timestamp,
-    }
-    pipe.hset('dataset500k', i, str(user_data))
+@timeit
+def insert_data(name, num_rows):
+    # Delete the "users" key if it exists
+    r.delete(name)
 
-    # Execute the pipeline in batches
-    if (i + 1) % batch_size == 0:
-        pipe.execute()
-        pipe = r.pipeline()
-        print(f"The batch number {i // batch_size} has finished")
+    # Create a pipeline
+    pipe = r.pipeline()
+    batch_size = 10000
 
-# Execute the pipeline
-pipe.execute()
-r.close()
+    # Insert data into Redis using pipeline
+    for i in range(num_rows):
+        timestamp = fake.date_time_between(start_date='-10y', end_date='now')
+        user_data = {
+            'user_id': random.randint(10000, 10010),
+            'timestamp': timestamp,
+        }
+        pipe.hset(name, i, str(user_data))
+
+        # Execute the pipeline in batches
+        if (i + 1) % batch_size == 0:
+            pipe.execute()
+            pipe = r.pipeline()
+
+    # Execute the pipeline
+    pipe.execute()
+
+
+if __name__ == "__main__":
+    fake = Faker()
+    # Connect to Redis
+    r = redis.Redis(host='localhost', port=6379)
+
+    insert_data(name='dataset1k', num_rows=1000)
+    insert_data(name='dataset100K', num_rows=100_000)
+    insert_data(name='dataset250K', num_rows=250_000)
+
+    r.close()
