@@ -1,0 +1,6 @@
+Open a Bash shell or terminal.
+
+Navigate to the directory where the autobuild script is located.
+
+Run the run.sh script using the following command:
+$sh prepare_system_run.sh

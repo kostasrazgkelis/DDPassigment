@@ -50,9 +50,11 @@ if __name__ == "__main__":
     conn = sqlite3.connect('data1/mydatabase.db')
     cursor = conn.cursor()
 
-    insert_data(name='dataset1k', num_rows=1000)
+    insert_data(name='dataset1K', num_rows=1000)
     insert_data(name='dataset100K', num_rows=100_000)
     insert_data(name='dataset250K', num_rows=250_000)
+    insert_data(name='dataset500K', num_rows=500_000)
+    insert_data(name='dataset1000K', num_rows=1_000_000)
 
     # Close the database connection
     conn.close()
