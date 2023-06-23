@@ -1,3 +1,18 @@
+Description of directories and files
+
+~test_directory: all the unitest for the pipelines are stored
+~docker-compose.yml: has all the databases servcies
+~calculate_times.ipynb: a jupyter notebook used to analyze the time of each method
+~redisdb.py: the main code to load data to the redis database
+~sqlitedb.oy: the main code to load data to the sqlite database
+~test_run_timer.sh: This is the bash script to load the functions into a testing pipeline
+~requirements.txt: has all the pip dependencies used in the enviroment
+~prepare_system_run.sh: It will prepare the system
+~join_methods.py: has all the custom functions
+
+
+
+
 Open a Bash shell or terminal.
 
 Navigate to the directory where the autobuild script is located.
